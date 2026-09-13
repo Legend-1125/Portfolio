@@ -1150,6 +1150,7 @@
   </div>
   <div class="copyline">Built by Vishal Sharma Oruganti · psst, try the Konami code</div>
 </footer>
+<div id="bottomSentinel" aria-hidden="true" style="height:1px;"></div>
 
 <script>
   (function(){
@@ -1164,10 +1165,11 @@
       return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
     }
     (function applyStoredTheme(){
+      /* Always start on light, regardless of the visitor's system preference — dark is opt-in via the toggle. */
       try{
         var saved = localStorage.getItem('vso-theme');
-        if (saved === 'dark' || saved === 'light') root.setAttribute('data-theme', saved);
-      }catch(e){}
+        root.setAttribute('data-theme', (saved === 'dark' || saved === 'light') ? saved : 'light');
+      }catch(e){ root.setAttribute('data-theme', 'light'); }
     })();
     themeToggle.addEventListener('click', function(){
       var next = activeTheme() === 'dark' ? 'light' : 'dark';
@@ -1855,8 +1857,14 @@
     var progressHudFill = document.getElementById('progressHudFill');
     function updateProgressHud(){
       var doc = document.documentElement;
-      var scrollTop = window.pageYOffset || doc.scrollTop;
-      var height = (doc.scrollHeight - doc.clientHeight) || 1;
+      var body = document.body;
+      var scrollTop = window.pageYOffset || doc.scrollTop || body.scrollTop || 0;
+      /* Cross-check several measurements — a lone doc.scrollHeight can come back equal to
+         clientHeight in some embedded/iframe contexts, which would divide by ~0 and read as "100%"
+         after barely any scrolling. Taking the max of all of them avoids that false bottom-out. */
+      var scrollHeight = Math.max(doc.scrollHeight, body.scrollHeight, doc.offsetHeight, body.offsetHeight);
+      var clientHeight = window.innerHeight || doc.clientHeight || 0;
+      var height = Math.max(scrollHeight - clientHeight, 1);
       var pct = Math.min(100, Math.max(0, (scrollTop / height) * 100));
       progressHudFill.style.width = pct + '%';
       return pct;
@@ -1886,8 +1894,7 @@
       }, 2000);
     }
     var bottomToastShown = false;
-    function maybeMarkBottom(pct){
-      if (pct < 98) return;
+    function markBottomReached(){
       if (!bottomToastShown){
         bottomToastShown = true;
         toast('Zone Cleared', 'You scrolled all the way to the end.', '🗺️');
@@ -1900,12 +1907,34 @@
       if (hudTicking) return;
       hudTicking = true;
       requestAnimationFrame(function(){
-        var pct = updateProgressHud();
-        maybeMarkBottom(pct);
+        updateProgressHud();
         hudTicking = false;
       });
     }, { passive: true });
     updateProgressHud();
+
+    /* "Reached the bottom" is decided by an actual sentinel element coming into view, not a
+       scrollHeight/clientHeight percentage — that math can read as "100%" after barely any
+       scrolling in some embedded/preview contexts, which was firing the achievement too early. */
+    var bottomSentinel = document.getElementById('bottomSentinel');
+    if (bottomSentinel){
+      if ('IntersectionObserver' in window){
+        var bottomObs = new IntersectionObserver(function(entries){
+          entries.forEach(function(entry){
+            if (entry.isIntersecting){
+              markBottomReached();
+              bottomObs.disconnect();
+            }
+          });
+        }, { threshold: 0 });
+        bottomObs.observe(bottomSentinel);
+      } else {
+        window.addEventListener('scroll', function(){
+          var r = bottomSentinel.getBoundingClientRect();
+          if (r.top < (window.innerHeight || document.documentElement.clientHeight)) markBottomReached();
+        }, { passive: true });
+      }
+    }
 
     /* ---------- Cursor trail / hover sparks ---------- */
     var fxCanvas = document.getElementById('cursorfx');
